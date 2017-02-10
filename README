@@ -1,0 +1,9 @@
+Matthew Budde
+February 2017
+
+This repo contains code to continuously read RFID tags through a ThingMagic
+USB Plus+ reader using the Mercury API provided by ThingMagic and upload the
+tag data to a remote server.
+
+Development is being done on Ubuntu 16.04 LTS - will be ported to Raspbian
+Jessie once working.
