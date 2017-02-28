@@ -25,86 +25,6 @@ bool connected;
                          "tmr://my-reader.example.com or tmr://my-reader.example.com --ant 1,2 --pow 2300\n"\
                          );}
 
-void errx(int exitval, const char *fmt, ...)
-{
-  va_list ap;
-
-  va_start(ap, fmt);
-  vfprintf(stderr, fmt, ap);
-
-  exit(exitval);
-}
-
-void checkerr(TMR_Reader* rp, TMR_Status ret, int exitval, const char *msg)
-{
-  if (TMR_SUCCESS != ret)
-  {
-    errx(exitval, "Error %s: %s\n", msg, TMR_strerr(rp, ret));
-  }
-}
-
-void serialPrinter(bool tx, uint32_t dataLen, const uint8_t data[],
-                   uint32_t timeout, void *cookie)
-{
-  FILE *out = cookie;
-  uint32_t i;
-
-  fprintf(out, "%s", tx ? "Sending: " : "Received:");
-  for (i = 0; i < dataLen; i++)
-  {
-    if (i > 0 && (i & 15) == 0)
-    {
-      fprintf(out, "\n         ");
-    }
-    fprintf(out, " %02x", data[i]);
-  }
-  fprintf(out, "\n");
-}
-
-void stringPrinter(bool tx,uint32_t dataLen, const uint8_t data[],uint32_t timeout, void *cookie)
-{
-  FILE *out = cookie;
-
-  fprintf(out, "%s", tx ? "Sending: " : "Received:");
-  fprintf(out, "%s\n", data);
-}
-
-void parseAntennaList(uint8_t *antenna, uint8_t *antennaCount, char *args)
-{
-  char *token = NULL;
-  char *str = ",";
-  uint8_t i = 0x00;
-  int scans;
-
-  /* get the first token */
-  if (NULL == args)
-  {
-    fprintf(stdout, "Missing argument\n");
-    usage();
-  }
-
-  token = strtok(args, str);
-  if (NULL == token)
-  {
-    fprintf(stdout, "Missing argument after %s\n", args);
-    usage();
-  }
-
-  while(NULL != token)
-  {
-    scans = sscanf(token, "%"SCNu8, &antenna[i]);
-    if (1 != scans)
-    {
-      fprintf(stdout, "Can't parse '%s' as an 8-bit unsigned integer value\n", token);
-      usage();
-    }
-    i++;
-    token = strtok(NULL, str);
-  }
-  *antennaCount = i;
-}
-#endif
-
 int main(int argc, char *argv[])
 {
   TMR_Reader r, *rp;
@@ -120,64 +40,13 @@ int main(int argc, char *argv[])
   TMR_String model;
   char str[64];
   TMR_TRD_MetadataFlag metadata = TMR_TRD_METADATA_FLAG_ALL;
-
-#ifndef BARE_METAL
-#if USE_TRANSPORT_LISTENER
-  TMR_TransportListenerBlock tb;
-#endif
-
-  if (argc < 2)
-  {
-    fprintf(stdout, "Not enough arguments.  Please provide reader URL.\n");
-    usage();
-  }
-
-  for (i = 2; i < argc; i+=2)
-  {
-    if(0x00 == strcmp("--ant", argv[i]))
-    {
-      if (NULL != antennaList)
-      {
-        fprintf(stdout, "Duplicate argument: --ant specified more than once\n");
-        usage();
-      }
-      parseAntennaList(buffer, &antennaCount, argv[i+1]);
-      antennaList = buffer;
-    }
-    else if (0 == strcmp("--pow", argv[i]))
-    {
-      long retval;
-      char *startptr;
-      char *endptr;
-      startptr = argv[i+1];
-      retval = strtol(startptr, &endptr, 0);
-      if (endptr != startptr)
-      {
-        readpower = retval;
-        fprintf(stdout, "Requested read power: %d cdBm\n", readpower);
-      }
-      else
-      {
-        fprintf(stdout, "Can't parse read power: %s\n", argv[i+1]);
-      }
-    }
-    else
-    {
-      fprintf(stdout, "Argument %s is not recognized\n", argv[i]);
-      usage();
-    }
-  }
-#endif
+  readpower = 100;
 
   rp = &r;
-#ifndef BARE_METAL
-  ret = TMR_create(rp, argv[1]);
-#else
-  ret = TMR_create(rp, "tmr:///com1");
+  ret = TMR_create(rp, "tmr:///COM4");
   buffer[0] = 1;
   antennaList = buffer;
   antennaCount = 0x01;
-#endif
 
 #ifndef BARE_METAL
   checkerr(rp, ret, 1, "creating reader");
@@ -326,116 +195,99 @@ if (TMR_ERROR_TAG_ID_BUFFER_FULL == ret)
     TMR_bytesToHex(trd.tag.epc, trd.tag.epcByteCount, epcStr);
 
 #ifndef BARE_METAL
-#ifdef WIN32
-	{
-		FILETIME ft, utc;
-		SYSTEMTIME st;
-		char* timeEnd;
-		char* end;
 
-		utc.dwHighDateTime = trd.timestampHigh;
-		utc.dwLowDateTime = trd.timestampLow;
+    uint8_t shift;
+    uint64_t timestamp;
+    time_t seconds;
+    int micros;
+    char* timeEnd;
+    char* end;
 
-		FileTimeToLocalFileTime( &utc, &ft );
-		FileTimeToSystemTime( &ft, &st );
-		timeEnd = timeStr + sizeof(timeStr)/sizeof(timeStr[0]);
-		end = timeStr;
-		end += sprintf(end, "%d-%d-%d", st.wYear,st.wMonth,st.wDay);
-		end += sprintf(end, "T%d:%d:%d %d", st.wHour,st.wMinute,st.wSecond, st.wMilliseconds);
-		end += sprintf(end, ".%06d", trd.dspMicros);
-  }
-#else
-    {
-      uint8_t shift;
-      uint64_t timestamp;
-      time_t seconds;
-      int micros;
-      char* timeEnd;
-      char* end;
+    shift = 32;
+    timestamp = ((uint64_t)trd.timestampHigh<<shift) | trd.timestampLow;
+    seconds = timestamp / 1000;
+    micros = (timestamp % 1000) * 1000;
 
-      shift = 32;
-      timestamp = ((uint64_t)trd.timestampHigh<<shift) | trd.timestampLow;
-      seconds = timestamp / 1000;
-      micros = (timestamp % 1000) * 1000;
+    /*
+     * Timestamp already includes millisecond part of dspMicros,
+     * so subtract this out before adding in dspMicros again
+     */
+    micros -= trd.dspMicros / 1000;
+    micros += trd.dspMicros;
 
-      /*
-       * Timestamp already includes millisecond part of dspMicros,
-       * so subtract this out before adding in dspMicros again
-       */
-      micros -= trd.dspMicros / 1000;
-      micros += trd.dspMicros;
+    timeEnd = timeStr + sizeof(timeStr)/sizeof(timeStr[0]);
+    end = timeStr;
+    end += strftime(end, timeEnd-end, "%FT%H:%M:%S", localtime(&seconds));
+    end += snprintf(end, timeEnd-end, ".%06d", micros);
+    end += strftime(end, timeEnd-end, "%z", localtime(&seconds));
 
-      timeEnd = timeStr + sizeof(timeStr)/sizeof(timeStr[0]);
-      end = timeStr;
-      end += strftime(end, timeEnd-end, "%FT%H:%M:%S", localtime(&seconds));
-      end += snprintf(end, timeEnd-end, ".%06d", micros);
-      end += strftime(end, timeEnd-end, "%z", localtime(&seconds));
-    }
 #endif
 
     printf("EPC:%s ", epcStr);
 // Enable PRINT_TAG_METADATA Flags to print Metadata value
 #if PRINT_TAG_METADATA
 {
-  uint16_t j = 0;
-	for (j = 0; j < 9; j++)
-	{
-		if ((TMR_TRD_MetadataFlag)trd.metadataFlags & (1<<j))
-		{
-			switch ((TMR_TRD_MetadataFlag)trd.metadataFlags & (1<<j))
-			{
-			case TMR_TRD_METADATA_FLAG_READCOUNT:
-					printf("Read Count : %d ", trd.readCount);
-					break;
-			case TMR_TRD_METADATA_FLAG_RSSI:
-					printf("RSSI : %d ", trd.rssi);
-					break;
-				case TMR_TRD_METADATA_FLAG_ANTENNAID:
-					printf("Antenna ID : %d ", trd.antenna);
-					break;
-				case TMR_TRD_METADATA_FLAG_FREQUENCY:
-					printf("Frequency : %d ", trd.frequency);
-					break;
-				case TMR_TRD_METADATA_FLAG_TIMESTAMP:
-					printf("Timestamp : %s ", timeStr);
-					break;
-				case TMR_TRD_METADATA_FLAG_PHASE:
-					printf("Phase : %d ", trd.phase);
-					break;
-				case TMR_TRD_METADATA_FLAG_PROTOCOL:
-					printf("Protocol : %d ", trd.tag.protocol);
-					break;
-				case TMR_TRD_METADATA_FLAG_DATA:
-					//TODO : Initialize Read Data
-					if (0 < trd.data.len)
-					{
-						char dataStr[255];
-						TMR_bytesToHex(trd.data.list, trd.data.len, dataStr);
-						printf("Data(%d): %s\n", trd.data.len, dataStr);
-					}
-					break;
-				case TMR_TRD_METADATA_FLAG_GPIO_STATUS:
-					{
-						TMR_GpioPin state[16];
-						uint8_t i, stateCount = numberof(state);
-						ret = TMR_gpiGet(rp, &stateCount, state);
-						if (TMR_SUCCESS != ret)
-						{
-							fprintf(stdout, "Error reading GPIO pins:%s\n", TMR_strerr(rp, ret));
-							return ret;
-						}
-						printf("GPIO stateCount: %d\n", stateCount);
-						for (i = 0 ; i < stateCount ; i++)
-						{
-							printf("Pin %d: %s\n", state[i].id, state[i].high ? "High" : "Low");
-						}
-					}
-					break;
-				default:
-					break;
-			}
-		}
-	}
+  while(1) {
+    uint16_t j = 0;
+  	for (j = 0; j < 9; j++)
+  	{
+  		if ((TMR_TRD_MetadataFlag)trd.metadataFlags & (1<<j))
+  		{
+  			switch ((TMR_TRD_MetadataFlag)trd.metadataFlags & (1<<j))
+  			{
+  			case TMR_TRD_METADATA_FLAG_READCOUNT:
+  					printf("Read Count : %d ", trd.readCount);
+  					break;
+  			case TMR_TRD_METADATA_FLAG_RSSI:
+  					printf("RSSI : %d ", trd.rssi);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_ANTENNAID:
+  					printf("Antenna ID : %d ", trd.antenna);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_FREQUENCY:
+  					printf("Frequency : %d ", trd.frequency);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_TIMESTAMP:
+  					printf("Timestamp : %s ", timeStr);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_PHASE:
+  					printf("Phase : %d ", trd.phase);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_PROTOCOL:
+  					printf("Protocol : %d ", trd.tag.protocol);
+  					break;
+  				case TMR_TRD_METADATA_FLAG_DATA:
+  					//TODO : Initialize Read Data
+  					if (0 < trd.data.len)
+  					{
+  						char dataStr[255];
+  						TMR_bytesToHex(trd.data.list, trd.data.len, dataStr);
+  						printf("Data(%d): %s\n", trd.data.len, dataStr);
+  					}
+  					break;
+  				case TMR_TRD_METADATA_FLAG_GPIO_STATUS:
+  					{
+  						TMR_GpioPin state[16];
+  						uint8_t i, stateCount = numberof(state);
+  						ret = TMR_gpiGet(rp, &stateCount, state);
+  						if (TMR_SUCCESS != ret)
+  						{
+  							fprintf(stdout, "Error reading GPIO pins:%s\n", TMR_strerr(rp, ret));
+  							return ret;
+  						}
+  						printf("GPIO stateCount: %d\n", stateCount);
+  						for (i = 0 ; i < stateCount ; i++)
+  						{
+  							printf("Pin %d: %s\n", state[i].id, state[i].high ? "High" : "Low");
+  						}
+  					}
+  					break;
+  				default:
+  					break;
+  			}
+  		}
+  	}
+  }
 }
 #endif
 	printf ("\n");
