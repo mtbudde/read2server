@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "read2serverfunc.h"
 
 #include "/home/matthew/Documents/Research/RFID/MercuryAPI/mercuryapi-1.29.2.10/c/src/api/tm_reader.h"
 #include "/home/matthew/Documents/Research/RFID/MercuryAPI/mercuryapi-1.29.2.10/c/src/api/serial_reader_imp.h"
